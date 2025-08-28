@@ -5,12 +5,12 @@ import time
 AFK = False
 AFK_REASON = None
 AFK_START = None
-MESSAGES = {}
+MESSAGES = {}       # Who messaged you
 REPLIED_USERS = set()
 
 
 def register(client):
-    # Command to set AFK
+    # Set AFK
     @client.on(events.NewMessage(pattern=r'\.afk'))
     async def set_afk(event):
         global AFK, AFK_REASON, AFK_START, MESSAGES, REPLIED_USERS
@@ -20,7 +20,7 @@ def register(client):
         AFK_START = time.time()
         MESSAGES.clear()
         REPLIED_USERS.clear()
-        await event.edit(f"✅ I am now AFK: {AFK_REASON}")
+        await event.respond(f"✅ I am now AFK: {AFK_REASON}")
 
     # Remove AFK on any outgoing message
     @client.on(events.NewMessage(outgoing=True))
@@ -33,8 +33,8 @@ def register(client):
             AFK_START = None
             REPLIED_USERS.clear()
             msg = f"✅ I am back online! You were AFK for {afk_time} seconds."
-            await event.edit(msg)
-            # Notify who messaged you
+            await event.respond(msg)
+
             if MESSAGES:
                 summary = "People who messaged you while AFK:\n"
                 for user, count in MESSAGES.items():
@@ -42,15 +42,16 @@ def register(client):
                 await event.respond(summary)
                 MESSAGES.clear()
 
-    # Auto-reply to incoming messages (robust for userbot)
+    # Auto-reply in PMs while AFK
     @client.on(events.NewMessage())
     async def afk_reply(event):
         global AFK, AFK_REASON, AFK_START, MESSAGES, REPLIED_USERS
 
+        # Only trigger if AFK is active
         if not AFK or AFK_START is None or event.out:
             return
 
-        # Only reply in private chats with real users
+        # Only reply in private chats
         if not getattr(event.chat, "megagroup", False) and event.is_private:
             sender = await event.get_sender()
             if not sender:
@@ -59,9 +60,11 @@ def register(client):
             sender_name = sender.first_name
 
             if sender_id in REPLIED_USERS:
-                return
+                return  # Already replied to this user
             REPLIED_USERS.add(sender_id)
 
+            # Count messages
             MESSAGES[sender_name] = MESSAGES.get(sender_name, 0) + 1
+
             afk_time = int(time.time() - AFK_START)
-            await event.reply(f"⏳ I am currently AFK ({AFK_REASON})\nAway for {afk_time} sec")
+            await event.respond(f"⏳ I am currently AFK ({AFK_REASON})\nAway for {afk_time} sec")
