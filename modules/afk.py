@@ -1,70 +1,81 @@
 from telethon import events
-import time
+from datetime import datetime
+import asyncio
 
 # Global AFK state
-AFK = False
-AFK_REASON = None
-AFK_START = None
-MESSAGES = {}       # Who messaged you
-REPLIED_USERS = set()
+class AFKState:
+    def __init__(self):
+        self.afk_on = False
+        self.reason = None
+        self.start_time = None
+        self.last_afk_messages = {}  # chat_id: message
+        self.replied_users = set()
+
+AFK_ = AFKState()
 
 
 def register(client):
-    # Set AFK
+    # Command to go AFK
     @client.on(events.NewMessage(pattern=r'\.afk'))
     async def set_afk(event):
-        global AFK, AFK_REASON, AFK_START, MESSAGES, REPLIED_USERS
         args = event.raw_text.split(maxsplit=1)
-        AFK_REASON = args[1] if len(args) > 1 else "AFK"
-        AFK = True
-        AFK_START = time.time()
-        MESSAGES.clear()
-        REPLIED_USERS.clear()
-        await event.respond(f"✅ I am now AFK: {AFK_REASON}")
+        AFK_.reason = args[1] if len(args) > 1 else "AFK"
+        AFK_.afk_on = True
+        AFK_.start_time = datetime.now()
+        AFK_.last_afk_messages.clear()
+        AFK_.replied_users.clear()
+        await event.respond(f"✅ I am now AFK: {AFK_.reason}")
 
     # Remove AFK on any outgoing message
     @client.on(events.NewMessage(outgoing=True))
     async def remove_afk(event):
-        global AFK, AFK_REASON, AFK_START, MESSAGES, REPLIED_USERS
-        if AFK:
-            AFK = False
-            AFK_REASON = None
-            afk_time = int(time.time() - AFK_START) if AFK_START else 0
-            AFK_START = None
-            REPLIED_USERS.clear()
-            msg = f"✅ I am back online! You were AFK for {afk_time} seconds."
-            await event.respond(msg)
+        if not AFK_.afk_on:
+            return
+        AFK_.afk_on = False
+        afk_duration = (datetime.now() - AFK_.start_time).seconds
+        AFK_.start_time = None
+        AFK_.replied_users.clear()
 
-            if MESSAGES:
-                summary = "People who messaged you while AFK:\n"
-                for user, count in MESSAGES.items():
-                    summary += f"- {user}: {count} message(s)\n"
-                await event.respond(summary)
-                MESSAGES.clear()
+        msg = f"✅ I am back online! You were AFK for {afk_duration} seconds."
+        await event.respond(msg)
 
-    # Auto-reply in PMs while AFK
+        # Clean up old AFK messages
+        for m in AFK_.last_afk_messages.values():
+            try:
+                await m.delete()
+            except Exception:
+                pass
+        AFK_.last_afk_messages.clear()
+
+    # Auto-reply to incoming PMs while AFK
     @client.on(events.NewMessage())
     async def afk_reply(event):
-        global AFK, AFK_REASON, AFK_START, MESSAGES, REPLIED_USERS
-
-        # Only trigger if AFK is active
-        if not AFK or AFK_START is None or event.out:
+        if not AFK_.afk_on or event.out:
             return
 
         # Only reply in private chats
-        if not getattr(event.chat, "megagroup", False) and event.is_private:
+        if event.is_private:
             sender = await event.get_sender()
             if not sender:
                 return
             sender_id = sender.id
-            sender_name = sender.first_name
+            chat_id = event.chat_id
 
-            if sender_id in REPLIED_USERS:
-                return  # Already replied to this user
-            REPLIED_USERS.add(sender_id)
+            # Reply only once per user
+            if sender_id in AFK_.replied_users:
+                return
+            AFK_.replied_users.add(sender_id)
 
-            # Count messages
-            MESSAGES[sender_name] = MESSAGES.get(sender_name, 0) + 1
+            afk_duration = int((datetime.now() - AFK_.start_time).total_seconds())
+            msg = await event.respond(
+                f"⏳ I am currently AFK ({AFK_.reason})\nAway for {afk_duration} sec"
+            )
 
-            afk_time = int(time.time() - AFK_START)
-            await event.respond(f"⏳ I am currently AFK ({AFK_REASON})\nAway for {afk_time} sec")
+            # Delete previous AFK message in this chat to avoid clutter
+            if chat_id in AFK_.last_afk_messages:
+                try:
+                    await AFK_.last_afk_messages[chat_id].delete()
+                except Exception:
+                    pass
+
+            AFK_.last_afk_messages[chat_id] = msg
