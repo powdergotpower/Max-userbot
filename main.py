@@ -1,7 +1,7 @@
 import asyncio
 import os
 import importlib
-from telethon import TelegramClient
+from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 # -----------------------------
@@ -12,6 +12,19 @@ api_hash = '7ed5401b625a0a4d3c45caf12c87f166'
 string_session = '1BVtsOJoBu3iNN6Rz96Nwbll7dyrrzoVrKYyWhqtZxJUHSiFsN2XvEU3APCn7Bw5w9n_qfG9N47oP_0Sy-bS2ql4NqMnUEKoHa33Wg0kFYTjskpYL8LsBzgp90PUlYbnKA_vH7iI031GpquW3d1Il9kNr_amnO935Oc6PtsGIucUk3sDuWShwlTN2dnI7YbTAy8kQlFAmkcCNbIWAAvUGiWP7e41veGVTZTxCuH8PebQjKXZdG_xGyxm_yf-WqMbWacHDbT9XMWndcKyAbdLBZsNfCL0xaCEBY30hNBWL30L2o8eOwlY1HiNlEXiBRo09ZYx3Cv4lQeDYkbnMs1M6fDx0NMdXi4c='
 
 client = TelegramClient(StringSession(string_session), api_id, api_hash)
+
+# -----------------------------
+# Whitelist: Only these IDs can trigger commands
+# -----------------------------
+ALLOWED_USERS = [8032922682, 5628638472, 7521335983]
+
+# -----------------------------
+# Global filter to block others
+# -----------------------------
+@client.on(events.NewMessage(incoming=True))
+async def global_filter(event):
+    if event.sender_id not in ALLOWED_USERS:
+        return  # Ignore all messages from non-whitelisted users
 
 # -----------------------------
 # Dynamic plugin loader
@@ -28,8 +41,6 @@ for file in os.listdir(modules_path):
 # -----------------------------
 # Example built-in command
 # -----------------------------
-from telethon import events
-
 @client.on(events.NewMessage(pattern=r'\.alive'))
 async def alive_handler(event):
     await event.edit('I am alive!')
