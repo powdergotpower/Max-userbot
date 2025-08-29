@@ -1,118 +1,74 @@
-from telethon.tl import functions
-from telethon.tl.types import ChatAdminRights, ChatBannedRights
-from userbot import catub
-from ..core.logger import logging
-from ..core.managers import edit_delete, edit_or_reply
-from ..helpers.utils import _format, get_user_from_event
-from . import BOTLOG, BOTLOG_CHATID
+# modules/admin.py
+from telethon import events
+from telethon.errors import ChatAdminRequiredError, UserAdminInvalidError
 
-LOGS = logging.getLogger(__name__)
-plugin_category = "admin"
+def register(client):
 
-BANNED_RIGHTS = ChatBannedRights(
-    until_date=None,
-    view_messages=True,
-    send_messages=True,
-    send_media=True,
-    send_stickers=True,
-    send_gifs=True,
-    send_games=True,
-    send_inline=True,
-    embed_links=True,
-)
+    @client.on(events.NewMessage(pattern=r"\.ban ?(.*)", outgoing=True))
+    async def ban_user(event):
+        if not event.is_group:
+            return await event.respond("❌ This command only works in groups.")
 
-UNBAN_RIGHTS = ChatBannedRights(
-    until_date=None,
-    send_messages=None,
-    send_media=None,
-    send_stickers=None,
-    send_gifs=None,
-    send_games=None,
-    send_inline=None,
-    embed_links=None,
-)
+        if not event.is_reply:
+            return await event.respond("⚠️ Reply to a user to ban them.")
 
-MUTE_RIGHTS = ChatBannedRights(until_date=None, send_messages=True)
-UNMUTE_RIGHTS = ChatBannedRights(until_date=None, send_messages=False)
+        try:
+            user = await event.get_reply_message()
+            reason = event.pattern_match.group(1) or "No reason"
+            await client.edit_permissions(event.chat_id, user.sender_id, view_messages=False)
+            await event.respond(f"🚫 Banned [{user.sender.first_name}](tg://user?id={user.sender_id})\nReason: `{reason}`")
+        except ChatAdminRequiredError:
+            await event.respond("❌ I need admin rights with ban permissions.")
+        except UserAdminInvalidError:
+            await event.respond("⚠️ Cannot ban another admin.")
 
+    @client.on(events.NewMessage(pattern=r"\.kick ?(.*)", outgoing=True))
+    async def kick_user(event):
+        if not event.is_group:
+            return await event.respond("❌ This command only works in groups.")
 
-@catub.cat_cmd(pattern=r"promote(?:\s|$)([\s\S]*)", command=("promote", plugin_category), groups_only=True, require_admin=True)
-async def promote(event):
-    "Promote a user to admin"
-    user, rank = await get_user_from_event(event)
-    if not user:
-        return
-    if not rank:
-        rank = "Admin"
-    catevent = await edit_or_reply(event, "`Promoting...`")
-    new_rights = ChatAdminRights(add_admins=False, invite_users=True, change_info=False, ban_users=True, delete_messages=True, pin_messages=True)
-    try:
-        await event.client(functions.channels.EditAdminRequest(event.chat_id, user.id, new_rights, rank))
-        await catevent.edit("✅ Promoted successfully!")
-        if BOTLOG:
-            await event.client.send_message(BOTLOG_CHATID, f"#PROMOTE\nUser: [{user.first_name}](tg://user?id={user.id})\nChat: {await event.get_chat()}")
-    except Exception as e:
-        await catevent.edit(f"❌ Error: {e}")
+        if not event.is_reply:
+            return await event.respond("⚠️ Reply to a user to kick them.")
 
+        try:
+            user = await event.get_reply_message()
+            reason = event.pattern_match.group(1) or "No reason"
+            await client.kick_participant(event.chat_id, user.sender_id)
+            await event.respond(f"👢 Kicked [{user.sender.first_name}](tg://user?id={user.sender_id})\nReason: `{reason}`")
+        except ChatAdminRequiredError:
+            await event.respond("❌ I need admin rights with kick permissions.")
+        except UserAdminInvalidError:
+            await event.respond("⚠️ Cannot kick another admin.")
 
-@catub.cat_cmd(pattern=r"demote(?:\s|$)([\s\S]*)", command=("demote", plugin_category), groups_only=True, require_admin=True)
-async def demote(event):
-    "Demote a user from admin"
-    user, _ = await get_user_from_event(event)
-    if not user:
-        return
-    catevent = await edit_or_reply(event, "`Demoting...`")
-    newrights = ChatAdminRights(add_admins=None, invite_users=None, change_info=None, ban_users=None, delete_messages=None, pin_messages=None)
-    try:
-        await event.client(functions.channels.EditAdminRequest(event.chat_id, user.id, newrights, "admin"))
-        await catevent.edit("✅ Demoted successfully!")
-    except Exception as e:
-        await catevent.edit(f"❌ Error: {e}")
+    @client.on(events.NewMessage(pattern=r"\.mute ?(.*)", outgoing=True))
+    async def mute_user(event):
+        if not event.is_group:
+            return await event.respond("❌ This command only works in groups.")
 
+        if not event.is_reply:
+            return await event.respond("⚠️ Reply to a user to mute them.")
 
-@catub.cat_cmd(pattern=r"ban(?:\s|$)([\s\S]*)", command=("ban", plugin_category), groups_only=True, require_admin=True)
-async def ban_user(event):
-    "Ban a user from group"
-    user, reason = await get_user_from_event(event)
-    if not user:
-        return
-    catevent = await edit_or_reply(event, "`Banning...`")
-    try:
-        await event.client(functions.channels.EditBannedRequest(event.chat_id, user.id, BANNED_RIGHTS))
-        if reason:
-            await catevent.edit(f"✅ Banned [{user.first_name}](tg://user?id={user.id})\nReason: {reason}")
-        else:
-            await catevent.edit(f"✅ Banned [{user.first_name}](tg://user?id={user.id})")
-    except Exception as e:
-        await catevent.edit(f"❌ Error: {e}")
+        try:
+            user = await event.get_reply_message()
+            reason = event.pattern_match.group(1) or "No reason"
+            await client.edit_permissions(event.chat_id, user.sender_id, send_messages=False)
+            await event.respond(f"🔇 Muted [{user.sender.first_name}](tg://user?id={user.sender_id})\nReason: `{reason}`")
+        except ChatAdminRequiredError:
+            await event.respond("❌ I need admin rights with mute permissions.")
+        except UserAdminInvalidError:
+            await event.respond("⚠️ Cannot mute another admin.")
 
+    @client.on(events.NewMessage(pattern=r"\.unmute", outgoing=True))
+    async def unmute_user(event):
+        if not event.is_group:
+            return await event.respond("❌ This command only works in groups.")
 
-@catub.cat_cmd(pattern=r"unban(?:\s|$)([\s\S]*)", command=("unban", plugin_category), groups_only=True, require_admin=True)
-async def unban_user(event):
-    "Unban a user from group"
-    user, _ = await get_user_from_event(event)
-    if not user:
-        return
-    catevent = await edit_or_reply(event, "`Unbanning...`")
-    try:
-        await event.client(functions.channels.EditBannedRequest(event.chat_id, user.id, UNBAN_RIGHTS))
-        await catevent.edit(f"✅ Unbanned [{user.first_name}](tg://user?id={user.id}) successfully!")
-    except Exception as e:
-        await catevent.edit(f"❌ Error: {e}")
+        if not event.is_reply:
+            return await event.respond("⚠️ Reply to a user to unmute them.")
 
-
-@catub.cat_cmd(pattern=r"kick(?:\s|$)([\s\S]*)", command=("kick", plugin_category), groups_only=True, require_admin=True)
-async def kick_user(event):
-    "Kick a user from group"
-    user, reason = await get_user_from_event(event)
-    if not user:
-        return
-    catevent = await edit_or_reply(event, "`Kicking...`")
-    try:
-        await event.client.kick_participant(event.chat_id, user.id)
-        if reason:
-            await catevent.edit(f"✅ Kicked [{user.first_name}](tg://user?id={user.id})\nReason: {reason}")
-        else:
-            await catevent.edit(f"✅ Kicked [{user.first_name}](tg://user?id={user.id})")
-    except Exception as e:
-        await catevent.edit(f"❌ Error: {e}")
+        try:
+            user = await event.get_reply_message()
+            await client.edit_permissions(event.chat_id, user.sender_id, send_messages=True)
+            await event.respond(f"🔊 Unmuted [{user.sender.first_name}](tg://user?id={user.sender_id})")
+        except ChatAdminRequiredError:
+            await event.respond("❌ I need admin rights with mute permissions.")
