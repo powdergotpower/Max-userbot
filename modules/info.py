@@ -2,7 +2,6 @@ from telethon import events
 from telethon.tl.functions.messages import GetFullChatRequest
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.users import GetFullUserRequest
-from telethon.tl.functions.users import GetUserPhotosRequest
 from telethon.tl.types import Channel, Chat
 from telethon.utils import get_display_name
 
@@ -25,8 +24,7 @@ def register(client):
             chat_title = full.chats[0].title
             members_count = full.full_chat.participants_count
             admins = [p.user_id for p in full.full_chat.admins]
-            # creator = channel creator is not directly accessible, so approximate
-            creator_id = None
+            creator_id = None  # Creator not always directly accessible
         else:
             full = await client(GetFullChatRequest(chat.id))
             chat_title = full.chat.title
@@ -41,7 +39,6 @@ def register(client):
         chat_id = chat.id
         active_today = daily_messages.get(chat_id, 0)
 
-        # Format admin mentions
         admin_mentions = []
         for admin_id in admins:
             try:
@@ -50,15 +47,14 @@ def register(client):
             except Exception:
                 continue
 
-        creator_mention = None
+        creator_mention = "Unavailable"
         if creator_id:
             try:
                 creator = await client.get_entity(creator_id)
                 creator_mention = f"@{creator.username}" if creator.username else get_display_name(creator)
             except Exception:
-                creator_mention = "Unavailable"
+                pass
 
-        # Chat creation date - approximate first message date
         try:
             first_message = await client.get_messages(chat, limit=1, reverse=True)
             creation = first_message[0].date.strftime("%Y-%m-%d") if first_message else "Unknown"
@@ -71,7 +67,7 @@ def register(client):
             f"ID: `{chat_id}`\n"
             f"Total Members: {members_count}\n"
             f"Active Messages Today: {active_today}\n"
-            f"Creator: {creator_mention or 'Unavailable'}\n"
+            f"Creator: {creator_mention}\n"
             f"Admins ({len(admin_mentions)}): {', '.join(admin_mentions)}\n"
             f"Creation Date (approx): {creation}"
         )
@@ -101,28 +97,22 @@ def register(client):
 
         full = await client(GetFullUserRequest(user.id))
         mutual_chats = len(await client.get_common_chats(user.id))
+
         last_name = user.last_name or ""
         username = user.username or "N/A"
         first_name = user.first_name or "N/A"
-        # Get last seen status as string
+
         status = "Unknown"
         if user.status:
             try:
-                if user.status.was_online:
+                if hasattr(user.status, "was_online") and user.status.was_online:
                     status = f"Last seen at {user.status.was_online.strftime('%Y-%m-%d %H:%M:%S')}"
-                elif user.status.online:
+                elif hasattr(user.status, "online") and user.status.online:
                     status = "Online now"
                 else:
                     status = f"{user.status.__class__.__name__}"
             except Exception:
                 status = "Unknown"
-
-        # User profile photos count
-        try:
-            photos = await client(GetUserPhotosRequest(user.id, offset=0, max_id=0, limit=1))
-            photo_count = photos.count
-        except Exception:
-            photo_count = 0
 
         msg = (
             f"**User Info:**\n"
@@ -130,12 +120,11 @@ def register(client):
             f"ID: `{user.id}`\n"
             f"Username: @{username}\n"
             f"Last Seen: {status}\n"
-            f"Mutual Groups with you: {mutual_chats}\n"
-            f"Profile Photos: {photo_count}"
+            f"Mutual Groups: {mutual_chats}"
         )
         await event.reply(msg)
 
-    # Daily message counter
+    # Daily message count tracker
     @client.on(events.NewMessage)
     async def daily_counter(event):
         chat_id = event.chat_id
