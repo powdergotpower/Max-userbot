@@ -1,7 +1,6 @@
 from telethon import events
 from telethon.tl.functions.account import UpdateProfileRequest
-from telethon.tl.functions.photos import UploadProfilePhoto
-from telethon.tl.types import InputPhoto
+from telethon.tl.functions.photos import UploadProfilePhotoRequest
 import io
 
 def register(client):
@@ -11,12 +10,12 @@ def register(client):
         arg = event.pattern_match.group(1).strip()
 
         # Determine target user
-        if event.is_private and not arg:
+        if event.is_private and not arg and not event.is_reply:
             await event.reply("Please reply to a user or provide a username/user_id to clone.")
             return
         try:
             if event.is_reply and not arg:
-                user = await event.get_reply_message().sender
+                user = await (await event.get_reply_message()).sender
             elif arg:
                 if arg.isdigit():
                     user = await client.get_entity(int(arg))
@@ -47,7 +46,7 @@ def register(client):
             photos = await client.get_profile_photos(user.id, limit=1)
             if photos.total > 0:
                 photo_bytes = await client.download_media(photos[0], file=bytes)
-                await client(UploadProfilePhoto(file=photo_bytes))
+                await client(UploadProfilePhotoRequest(file=photo_bytes))
                 msg += "✅ Profile photo cloned."
             else:
                 msg += "⚠️ User has no profile photo."
