@@ -1,56 +1,96 @@
-from telethon import events, types
-from telethon.tl.functions.channels import GetParticipantRequest
-from telethon.tl.types import ChannelParticipantAdmin, ChannelParticipantCreator
+from telethon import events
+from telethon.tl.functions.messages import DeleteMessagesRequest
 
-# Store muted users in memory (or you can persist in a file/db)
-MUTED_USERS = set()
+def register(client):
+    muted_users = {}  # chat_id: set of muted user IDs
 
-async def get_participant(client, chat_id, user_id):
-    try:
-        return await client(GetParticipantRequest(chat_id, user_id))
-    except:
-        return None
+    # -----------------------------
+    # .mute command
+    # -----------------------------
+    @client.on(events.NewMessage(pattern=r'\.mute(?: |$)(.*)'))
+    async def mute_handler(event):
+        chat = await event.get_chat()
+        chat_id = event.chat_id
 
-def is_admin_or_owner(participant):
-    if isinstance(participant.participant, ChannelParticipantAdmin):
-        return "admin"
-    elif isinstance(participant.participant, ChannelParticipantCreator):
-        return "owner"
-    return "member"
+        if not hasattr(muted_users, chat_id):
+            muted_users[chat_id] = set()
+        muted_set = muted_users.setdefault(chat_id, set())
 
-@client.on(events.NewMessage(pattern=r'\.mute(?: |$)(.*)'))
-async def mute_handler(event):
-    chat = await event.get_chat()
-    if not getattr(chat, 'megagroup', False):
-        await event.reply("This command works only in groups.")
-        return
-
-    # Get target user
-    if event.is_reply:
-        target = await event.get_reply_message()
-        user = target.sender
-    else:
-        args = event.pattern_match.group(1)
-        if not args:
-            await event.reply("Reply or mention a user to mute.")
+        # Get target user
+        arg = event.pattern_match.group(1).strip()
+        if event.is_reply and not arg:
+            user = await event.get_reply_message().get_sender()
+        elif arg:
+            try:
+                if arg.startswith("@"):
+                    user = await client.get_entity(arg)
+                else:
+                    user = await client.get_entity(int(arg))
+            except Exception:
+                await event.reply("User not found.")
+                return
+        else:
+            await event.reply("Reply to a user or use .mute @username or .mute user_id")
             return
-        user = await event.client.get_entity(args)
 
-    participant = await get_participant(event.client, event.chat_id, user.id)
-    role = is_admin_or_owner(participant) if participant else "member"
-
-    if role == "member":
-        MUTED_USERS.add(user.id)
-        await event.reply(f"Shhhh [{user.first_name}](tg://user?id={user.id}) stay quiet 😴")
-    elif role == "admin":
-        await event.reply(f"Have some rest, [{user.first_name}](tg://user?id={user.id}) 😎")
-    elif role == "owner":
-        await event.reply(f"Sometimes [{user.first_name}](tg://user?id={user.id}) should stay quiet 😉")
-
-@client.on(events.NewMessage)
-async def delete_muted_messages(event):
-    if event.chat_id and event.sender_id in MUTED_USERS:
+        # Check if target is admin/owner
+        admin = False
+        creator = False
         try:
-            await event.delete()
-        except:
-            pass
+            participant = await client.get_permissions(chat, user)
+            admin = participant.is_admin
+            creator = participant.is_creator
+        except Exception:
+            pass  # user not in chat or private chat
+
+        # Add to muted set
+        muted_set.add(user.id)
+
+        # Reply according to role
+        if creator:
+            await event.reply(f"Sometimes {user.first_name} should stay quiet 😉")
+        elif admin:
+            await event.reply(f"Have some rest, {user.first_name} admin 😎")
+        else:
+            await event.reply(f"Shhhh @{user.username or user.first_name}, stay muted 🤫")
+
+    # -----------------------------
+    # .unmute command
+    # -----------------------------
+    @client.on(events.NewMessage(pattern=r'\.unmute(?: |$)(.*)'))
+    async def unmute_handler(event):
+        chat_id = event.chat_id
+        muted_set = muted_users.setdefault(chat_id, set())
+
+        arg = event.pattern_match.group(1).strip()
+        if event.is_reply and not arg:
+            user = await event.get_reply_message().get_sender()
+        elif arg:
+            try:
+                if arg.startswith("@"):
+                    user = await client.get_entity(arg)
+                else:
+                    user = await client.get_entity(int(arg))
+            except Exception:
+                await event.reply("User not found.")
+                return
+        else:
+            await event.reply("Reply to a user or use .unmute @username or .unmute user_id")
+            return
+
+        muted_set.discard(user.id)
+        await event.reply(f"User {user.first_name} is now unmuted ✅")
+
+    # -----------------------------
+    # Delete messages from muted users
+    # -----------------------------
+    @client.on(events.NewMessage)
+    async def auto_delete(event):
+        chat_id = event.chat_id
+        muted_set = muted_users.get(chat_id, set())
+
+        if event.sender_id in muted_set:
+            try:
+                await client(DeleteMessagesRequest([event.message.id]))
+            except Exception:
+                pass
