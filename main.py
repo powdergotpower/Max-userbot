@@ -19,16 +19,20 @@ client = TelegramClient(StringSession(string_session), api_id, api_hash)
 ALLOWED_USERS = [8032922682, 5628638472, 7521335983]
 
 # -----------------------------
-# Global filter to block others
+# Override add_event_handler to enforce whitelist
 # -----------------------------
-async def global_filter(event):
-    if event.sender_id not in ALLOWED_USERS:
-        # Prevent any other handlers from receiving this event
-        event._handled = True
-        return
+_original_add_event_handler = client.add_event_handler
 
-# Add the filter BEFORE loading modules
-client.add_event_handler(global_filter, events.NewMessage(incoming=True))
+def whitelist_add_event_handler(callback, event):
+    async def wrapped(event_obj):
+        # Only allow whitelisted users to trigger any event
+        if getattr(event_obj, 'sender_id', None) not in ALLOWED_USERS:
+            return
+        await callback(event_obj)
+    _original_add_event_handler(wrapped, event)
+
+# Apply the override BEFORE loading modules
+client.add_event_handler = whitelist_add_event_handler
 
 # -----------------------------
 # Dynamic plugin loader
