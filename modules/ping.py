@@ -1,18 +1,17 @@
 from telethon import events
-import time
+from telethon.tl.functions.messages import UpdatePinnedMessageRequest
 
 def register(client):
 
-    @client.on(events.NewMessage(pattern=r'^\.ping$'))
-    async def ping_handler(event):
-        chat = await event.get_chat()
-        start_time = time.time()
-        msg = await event.reply("🏓 Pong!")
-        end_time = time.time()
-        delta = int((end_time - start_time) * 1000)  # ms
-
-        # Only show extra text in groups if needed
-        if hasattr(chat, "id"):
-            await msg.edit(f"Pong! 🏓\nResponse time: {delta}ms")
-        else:
-            await msg.edit(f"Pong! 🏓\nResponse time: {delta}ms\nThis command only works in groups.")
+    # Only trigger on exact .pin command
+    @client.on(events.NewMessage(pattern=r'^\.pin$'))
+    async def pin_handler(event):
+        if not event.is_group:
+            await event.reply("This command is for groups only.")
+            return
+        if not event.is_reply:
+            await event.reply("Reply to a message to pin it.")
+            return
+        msg = await event.get_reply_message()
+        await client(UpdatePinnedMessageRequest(peer=event.chat_id, id=msg.id, silent=True))
+        await event.reply("Message pinned ✅")
