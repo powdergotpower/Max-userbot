@@ -1,100 +1,97 @@
-# modules/info.py
 from telethon import events
-from telethon.tl.functions.channels import GetFullChannelRequest
-from telethon.tl.functions.users import GetFullUserRequest
-from telethon.tl.types import ChannelParticipantsAdmins
-from datetime import datetime
-import asyncio
+from telethon.tl.functions.channels import GetFullChannel
+from telethon.tl.functions.users import GetFullUser
+from telethon.tl.types import ChannelParticipantsAdmins, UserStatusOffline, UserStatusOnline
+from datetime import datetime, timedelta
 
-# -------------------------
-# Daily messages storage
-# -------------------------
-daily_messages = {}  # {chat_id: {user_id: count}}
+# Track daily messages (simple in-memory counter)
+DAILY_MSGS = {}
 
-def track_message(event):
-    chat_id = event.chat_id
-    user_id = event.sender_id
-    if chat_id not in daily_messages:
-        daily_messages[chat_id] = {}
-    if user_id not in daily_messages[chat_id]:
-        daily_messages[chat_id][user_id] = 0
-    daily_messages[chat_id][user_id] += 1
+def get_daily_msgs(chat_id, user_id):
+    return DAILY_MSGS.get(chat_id, {}).get(user_id, 0)
 
-# -------------------------
-# Group info command
-# -------------------------
-@events.register(events.NewMessage(pattern=r'\.gcinfo'))
+@client.on(events.NewMessage(pattern=r'\.gcinfo'))
 async def gcinfo(event):
-    if not event.is_group:
+    chat = await event.get_chat()
+    if not getattr(chat, 'megagroup', False):
         await event.reply("This command works only in groups.")
         return
 
-    chat = await event.get_chat()
-    full_chat = await event.client(GetFullChannelRequest(chat))
+    full = await client(GetFullChannel(event.chat_id))
+    participants = await client.get_participants(event.chat_id)
+    admins = [p for p in participants if p.participant.admin_rights or p.participant.creator]
+    total_users = full.full_chat.participants_count
+
+    # Active members today
+    active_users = len([uid for uid, msgs in DAILY_MSGS.get(event.chat_id, {}).items() if msgs > 0])
+    
     owner = None
-    admins_list = []
+    for a in admins:
+        if getattr(a.participant, 'creator', False):
+            owner = a
+            break
 
-    # get owner and admins
-    for participant in full_chat.full_chat.participants.participants:
-        if hasattr(participant, 'participant'):
-            if getattr(participant.participant, 'admin_rights', None):
-                admins_list.append(participant)
-        if getattr(participant.participant, 'user_id', None) == full_chat.full_chat.creator:
-            owner = participant
-
-    total_members = chat.participants_count
-    active_members = len(daily_messages.get(chat.id, {}))
-    bot_count = len([u for u in full_chat.full_chat.participants.participants if u.user_id < 0])
+    # Total daily messages in this group
+    group_daily_msgs = sum(DAILY_MSGS.get(event.chat_id, {}).values())
 
     msg = f"**Group Info:**\n"
-    msg += f"Name: {chat.title}\n"
-    msg += f"ID: `{chat.id}`\n"
-    msg += f"Owner: {owner.user_id if owner else 'Unknown'}\n"
-    msg += f"Admins: {', '.join(str(a.user_id) for a in admins_list) if admins_list else 'None'}\n"
-    msg += f"Total members: {total_members}\n"
-    msg += f"Active members today: {active_members}\n"
-    msg += f"Number of bots: {bot_count}\n"
-    msg += f"Daily messages count: {sum(daily_messages.get(chat.id, {}).values())}\n"
-    msg += f"Created at: {chat.date if hasattr(chat, 'date') else 'Unknown'}\n"
-    
+    msg += f"Title: {chat.title}\n"
+    msg += f"ID: {chat.id}\n"
+    msg += f"Total members: {total_users}\n"
+    msg += f"Admins count: {len(admins)}\n"
+    msg += f"Active members today: {active_users}\n"
+    msg += f"Daily messages today: {group_daily_msgs}\n"
+    if owner:
+        msg += f"Owner: [{owner.first_name}](tg://user?id={owner.id})\n"
+
     await event.reply(msg)
 
-# -------------------------
-# User info command
-# -------------------------
-@events.register(events.NewMessage(pattern=r'\.info(?:\s+|$)(.*)'))
+@client.on(events.NewMessage(pattern=r'\.info(?: |$)(.*)'))
 async def user_info(event):
-    await track_message(event)  # Track messages for activity
-
-    args = event.pattern_match.group(1).strip()
-    if args:
-        # Try to get user by username
-        try:
-            user = await event.client.get_entity(args)
-        except Exception:
-            await event.reply("User not found.")
-            return
-    elif event.is_reply:
-        reply = await event.get_reply_message()
-        user = await event.client.get_entity(reply.sender_id)
+    if event.is_reply:
+        user = (await event.get_reply_message()).sender
     else:
-        user = await event.client.get_entity(event.sender_id)
+        args = event.pattern_match.group(1)
+        if not args:
+            await event.reply("Reply to a user or provide a username/ID.")
+            return
+        user = await client.get_entity(args)
 
-    full_user = await event.client(GetFullUserRequest(user.id))
-    common_chats = await event.client.get_common_chats(user.id)
+    full = await client(GetFullUser(user.id))
 
-    user_daily = 0
-    for chat_id, data in daily_messages.items():
-        if user.id in data:
-            user_daily += data[user.id]
+    # Count common groups
+    common_chats = await client.get_common_chats(user.id)
+    total_common = len(common_chats)
+
+    # Daily messages in groups we share
+    daily_msgs = sum([get_daily_msgs(chat.id, user.id) for chat in common_chats if getattr(chat, 'megagroup', False)])
+
+    # Last seen / online status
+    if isinstance(user.status, UserStatusOnline):
+        status = "Online"
+    elif isinstance(user.status, UserStatusOffline):
+        last_seen = user.status.was_online.strftime("%Y-%m-%d %H:%M")
+        status = f"Last seen: {last_seen}"
+    else:
+        status = "Status unknown"
 
     msg = f"**User Info:**\n"
-    msg += f"Name: {user.first_name or ''} {user.last_name or ''}\n"
-    msg += f"Username: @{user.username if user.username else 'None'}\n"
-    msg += f"ID: `{user.id}`\n"
-    msg += f"Bot: {'Yes' if user.bot else 'No'}\n"
-    msg += f"Common groups with you: {len(common_chats)}\n"
-    msg += f"Daily messages count: {user_daily}\n"
-    msg += f"About: {full_user.about or 'No bio'}\n"
-    
+    msg += f"Name: {user.first_name} {user.last_name or ''}\n"
+    msg += f"Username: @{user.username or 'N/A'}\n"
+    msg += f"ID: {user.id}\n"
+    msg += f"Total common groups: {total_common}\n"
+    msg += f"Daily messages today: {daily_msgs}\n"
+    msg += f"Status: {status}\n"
+
+    # Optional: roles in common groups
+    roles = []
+    for chat in common_chats:
+        participants = await client.get_participants(chat.id, filter=ChannelParticipantsAdmins)
+        if any(p.id == user.id for p in participants):
+            roles.append(f"{chat.title} (Admin)")
+        else:
+            roles.append(f"{chat.title} (Member)")
+    if roles:
+        msg += "Roles in common groups:\n" + "\n".join(roles[:10])  # limit to 10 groups
+
     await event.reply(msg)
