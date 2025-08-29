@@ -1,5 +1,7 @@
 from telethon import events
-from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
+from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest, UploadProfilePhotoRequest
+from telethon.tl.types import InputPhoto
+import io
 
 def register(client):
 
@@ -8,13 +10,11 @@ def register(client):
         from string import ascii_lowercase
 
         try:
-            # Try original username first
             await client(UpdateUsernameRequest(username))
             return username
         except:
             pass
 
-        # Try username_a, username_b, ...
         for letter in ascii_lowercase:
             new_username = f"{username}_{letter}"
             try:
@@ -22,7 +22,7 @@ def register(client):
                 return new_username
             except:
                 continue
-        return None  # Couldn't find available
+        return None
 
     @client.on(events.NewMessage(pattern=r'\.clone(?: |$)(.*)'))
     async def clone_handler(event):
@@ -56,24 +56,37 @@ def register(client):
             await event.reply("Reply to a user or provide username/user_id to clone.")
             return
 
-        # Clone first_name, last_name
         try:
+            # Clone first name and last name
             await client(UpdateProfileRequest(
                 first_name=user.first_name or "",
                 last_name=user.last_name or ""
             ))
 
-            # Clone username if exists
+            # Clone username
             final_username = None
-            if user.username:
+            if getattr(user, "username", None):
                 final_username = await make_username_available(user.username)
+
+            # Clone profile photo
+            try:
+                photos = await client.get_profile_photos(user.id, limit=1)
+                if photos.total > 0:
+                    photo = await client.download_media(photos[0], file=bytes)
+                    await client(UploadProfilePhotoRequest(file=photo))
+                    photo_msg = "Profile photo cloned."
+                else:
+                    photo_msg = "User has no profile photo."
+            except Exception:
+                photo_msg = "Failed to clone profile photo."
 
             msg = f"Cloned profile of {user.first_name or ''} {user.last_name or ''} successfully ✅"
             if final_username:
                 msg += f"\nUsername set to @{final_username}"
             else:
-                if user.username:
+                if getattr(user, "username", None):
                     msg += "\nOriginal username unavailable, used only name."
+            msg += f"\n{photo_msg}"
 
             await event.reply(msg)
 
