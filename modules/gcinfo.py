@@ -8,7 +8,7 @@ daily_messages = {}
 
 def register(client):
 
-    # Count every message for daily activity
+    # Daily message counter
     @client.on(events.NewMessage)
     async def daily_counter(event):
         chat_id = event.chat_id
@@ -27,15 +27,17 @@ def register(client):
         chat_id = chat.id
         active_today = daily_messages.get(chat_id, 0)
 
-        admins = []
-        owner_mention = "Unavailable"
         total_members = 0
+        owner_mention = "Unavailable"
+        admins = []
+        member_names = []
 
         try:
-            if isinstance(chat, Channel):  # Supergroup/channel
+            if isinstance(chat, Channel):  # Supergroup / channel
                 full = await client(GetFullChannelRequest(chat.id))
                 total_members = full.full_chat.participants_count
 
+                # Get admins
                 participants = await client(GetParticipantsRequest(
                     channel=chat,
                     filter=ChannelParticipantsAdmins(),
@@ -52,6 +54,11 @@ def register(client):
                     else:
                         admins.append(mention)
 
+                # Fetch first 20 members as example
+                all_members = await client.get_participants(chat, limit=20)
+                for m in all_members:
+                    member_names.append(f"{get_display_name(m)}")
+
             else:  # Basic group
                 full = await client(GetFullChatRequest(chat.id))
                 total_members = len(full.users)
@@ -63,10 +70,13 @@ def register(client):
                         owner_mention = mention
                     elif getattr(u, 'admin_rights', None):
                         admins.append(mention)
+                    member_names.append(get_display_name(entity))
 
         except Exception as e:
             await event.reply(f"Failed to fetch group info: {e}")
             return
+
+        members_text = "\n".join(member_names[:20])  # show first 20 members
 
         msg = (
             f"**Group Info:**\n"
@@ -75,7 +85,8 @@ def register(client):
             f"Total Members: {total_members}\n"
             f"Active Messages Today: {active_today}\n"
             f"Owner: {owner_mention}\n"
-            f"Admins ({len(admins)}): {', '.join(admins) if admins else 'None'}"
+            f"Admins ({len(admins)}):\n" + ("\n".join(admins) if admins else "None") + "\n\n"
+            f"Some Members:\n{members_text}"
         )
 
         await event.reply(msg)
