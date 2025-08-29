@@ -1,131 +1,125 @@
-from telethon import events
-from telethon.tl.functions.channels import EditBannedRequest, EditAdminRequest
-from telethon.tl.functions.messages import DeleteHistoryRequest, PinMessageRequest, UnpinMessageRequest
-from telethon.tl.types import ChatBannedRights
-from telethon.errors import BadRequestError, UserIdInvalidError
-
-from main import client  # Adjust if your main.py exposes the client
-from helpers.utils import get_user_from_event, _format  # Make sure helpers exists
-from core.data import _sudousers_list
-
-BOTLOG = True
-BOTLOG_CHATID = -100123456789  # Replace with your bot log chat id
-
-BANNED_RIGHTS = ChatBannedRights(
-    until_date=None,
-    view_messages=True,
-    send_messages=True,
-    send_media=True,
-    send_stickers=True,
-    send_gifs=True,
-    send_games=True,
-    send_inline=True,
-    embed_links=True,
-)
-
-UNBAN_RIGHTS = ChatBannedRights(
-    until_date=None,
-    send_messages=None,
-    send_media=None,
-    send_stickers=None,
-    send_gifs=None,
-    send_games=None,
-    send_inline=None,
-    embed_links=None,
-)
+import asyncio
+from telethon import events, functions, types
 
 # -----------------------------
-# Kick command
+# Admin commands
 # -----------------------------
-@client.on(events.NewMessage(pattern=r"\.kick(?: |$)([\s\S]*)"))
-async def kick(event):
-    user, reason = await get_user_from_event(event)
-    if not user:
-        return await event.reply("No user found to kick.")
+@client.on(events.NewMessage(pattern=r'\.kick(?: |$)(.*)'))
+async def kick_user(event):
+    if not event.is_group:
+        return await event.reply("This command only works in groups.")
+    
+    args = event.pattern_match.group(1).strip()
+    user = None
+
+    if event.is_reply:
+        user = await event.get_reply_user()
+    elif args:
+        try:
+            user = await client.get_entity(args)
+        except:
+            return await event.reply("Invalid username or ID.")
+    else:
+        return await event.reply("Reply to a user or provide a username to kick.")
+
     try:
-        await client.kick_participant(event.chat_id, user.id)
-        text = f"`Kicked` [{user.first_name}](tg://user?id={user.id})!"
-        if reason:
-            text += f"\nReason: {reason}"
-        await event.reply(text)
-    except BadRequestError as e:
-        await event.reply(f"`Cannot kick user:` {e}")
-
-# -----------------------------
-# Ban command
-# -----------------------------
-@client.on(events.NewMessage(pattern=r"\.ban(?: |$)([\s\S]*)"))
-async def ban(event):
-    user, reason = await get_user_from_event(event)
-    if not user:
-        return await event.reply("No user found to ban.")
-    try:
-        await client(EditBannedRequest(event.chat_id, user.id, BANNED_RIGHTS))
-        text = f"`Banned` [{user.first_name}](tg://user?id={user.id})!"
-        if reason:
-            text += f"\nReason: {reason}"
-        await event.reply(text)
-        if BOTLOG:
-            await client.send_message(
-                BOTLOG_CHATID,
-                f"#BAN\nUSER: [{user.first_name}](tg://user?id={user.id})\nCHAT: {event.chat_id}\nREASON: {reason if reason else 'None'}"
-            )
-    except BadRequestError as e:
-        await event.reply(f"`Cannot ban user:` {e}")
-
-# -----------------------------
-# Unban command
-# -----------------------------
-@client.on(events.NewMessage(pattern=r"\.unban(?: |$)([\s\S]*)"))
-async def unban(event):
-    user, _ = await get_user_from_event(event)
-    if not user:
-        return await event.reply("No user found to unban.")
-    try:
-        await client(EditBannedRequest(event.chat_id, user.id, UNBAN_RIGHTS))
-        await event.reply(f"`Unbanned` [{user.first_name}](tg://user?id={user.id}) successfully.")
-    except UserIdInvalidError:
-        await event.reply("`User not found or invalid ID`")
+        await client.kick_participant(await event.get_chat(), user)
+        await event.reply(f"👢 Kicked [{user.first_name}](tg://user?id={user.id})")
     except Exception as e:
         await event.reply(f"Error: {e}")
 
 # -----------------------------
-# Pin command
-# -----------------------------
-@client.on(events.NewMessage(pattern=r"\.pin(?: |$)"))
-async def pin(event):
-    reply = await event.get_reply_message()
-    if not reply:
-        return await event.reply("Reply to a message to pin it.")
+@client.on(events.NewMessage(pattern=r'\.ban(?: |$)(.*)'))
+async def ban_user(event):
+    if not event.is_group:
+        return await event.reply("This command only works in groups.")
+    
+    args = event.pattern_match.group(1).strip()
+    user = None
+
+    if event.is_reply:
+        user = await event.get_reply_user()
+    elif args:
+        try:
+            user = await client.get_entity(args)
+        except:
+            return await event.reply("Invalid username or ID.")
+    else:
+        return await event.reply("Reply to a user or provide a username to ban.")
+
     try:
-        await client(PinMessageRequest(event.chat_id, reply.id, notify=True))
-        await event.reply("Message pinned successfully!")
-    except BadRequestError:
-        await event.reply("I don't have permission to pin messages.")
+        await client.edit_permissions(await event.get_chat(), user, view_messages=False)
+        await event.reply(f"🚫 Banned [{user.first_name}](tg://user?id={user.id})")
+    except Exception as e:
+        await event.reply(f"Error: {e}")
 
 # -----------------------------
-# Unpin command
-# -----------------------------
-@client.on(events.NewMessage(pattern=r"\.unpin(?: |$)"))
-async def unpin(event):
-    reply = await event.get_reply_message()
-    if not reply:
-        return await event.reply("Reply to a message to unpin it.")
+@client.on(events.NewMessage(pattern=r'\.unban(?: |$)(.*)'))
+async def unban_user(event):
+    if not event.is_group:
+        return await event.reply("This command only works in groups.")
+
+    args = event.pattern_match.group(1).strip()
+    user = None
+
+    if event.is_reply:
+        user = await event.get_reply_user()
+    elif args:
+        try:
+            user = await client.get_entity(args)
+        except:
+            return await event.reply("Invalid username or ID.")
+    else:
+        return await event.reply("Reply to a user or provide a username to unban.")
+
     try:
-        await client(UnpinMessageRequest(event.chat_id, reply.id))
-        await event.reply("Message unpinned successfully!")
-    except BadRequestError:
-        await event.reply("I don't have permission to unpin messages.")
+        await client.edit_permissions(await event.get_chat(), user, view_messages=True)
+        await event.reply(f"✅ Unbanned [{user.first_name}](tg://user?id={user.id})")
+    except Exception as e:
+        await event.reply(f"Error: {e}")
 
 # -----------------------------
-# Clean command
+@client.on(events.NewMessage(pattern=r'\.pin'))
+async def pin_message(event):
+    if not event.is_group:
+        return await event.reply("This command only works in groups.")
+    
+    if event.is_reply:
+        reply = await event.get_reply_message()
+        await client(functions.channels.EditPinnedMessageRequest(
+            channel=await event.get_chat(),
+            id=reply.id,
+            silent=True
+        ))
+        await event.reply("📌 Pinned message")
+    else:
+        await event.reply("Reply to a message to pin.")
+
 # -----------------------------
-@client.on(events.NewMessage(pattern=r"\.clean (\d+)"))
-async def clean(event):
-    count = int(event.pattern_match.group(1))
-    msgs = await client.get_messages(event.chat_id, limit=count)
-    try:
-        await client(DeleteHistoryRequest(event.chat_id, max_id=msgs[0].id))
-        await event.reply(f"Deleted last {count} messages.")
-    except BadRequestError:
-        await event.reply("I don't have permission to delete messages.")
+@client.on(events.NewMessage(pattern=r'\.unpin'))
+async def unpin_message(event):
+    if not event.is_group:
+        return await event.reply("This command only works in groups.")
+    
+    chat = await event.get_chat()
+    await client(functions.channels.EditPinnedMessageRequest(channel=chat, id=0))
+    await event.reply("📌 Unpinned all messages")
+
+# -----------------------------
+@client.on(events.NewMessage(pattern=r'\.clean(?: |$)(\d+)'))
+async def clean_messages(event):
+    if not event.is_group:
+        return await event.reply("This command only works in groups.")
+
+    count = int(event.pattern_match.group(1) or 0)
+    if count <= 0:
+        return await event.reply("Provide a valid number of messages to delete.")
+
+    messages = []
+    async for msg in client.iter_messages(await event.get_chat(), limit=count + 1):
+        messages.append(msg.id)
+    await client.delete_messages(await event.get_chat(), messages)
+    await event.reply(f"🧹 Cleaned last {count} messages.", delete_in=5)
+
+# -----------------------------
+print("[+] admin.py loaded")
