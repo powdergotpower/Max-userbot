@@ -1,87 +1,93 @@
-import random
+import html
 import io
 from telethon import events
-from telethon.tl.functions.account import UpdateUsernameRequest, UpdateProfileRequest
-from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
+from telethon.tl import functions
 from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
+from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
 
-def register(client):
+from ..Config import Config
+from ..sql_helper.globals import gvarstatus
+from . import edit_delete, catub, BOTLOG, BOTLOG_CHATID, ALIVE_NAME
 
-    @client.on(events.NewMessage(pattern=r'^\.clone(?:\s+(.+))?$', outgoing=True))
-    async def clone_profile(event):
-        arg = event.pattern_match.group(1)
-        
-        if arg:
-            target = arg.strip()
-        elif event.is_reply:
-            reply_msg = await event.get_reply_message()
-            target = reply_msg.sender_id if reply_msg else None
-            if not target:
-                await event.reply("Cannot get the user from reply.")
-                return
-        else:
-            await event.reply("Usage:\n.clone @username\nor reply to a user's message with .clone")
-            return
+plugin_category = "utils"
 
-        try:
-            target_entity = await client.get_entity(target)
-        except Exception as e:
-            await event.reply(f"Failed to find user: {e}")
-            return
+@catub.cat_cmd(
+    pattern=r"clone(?:\s|$)([\s\S]*)",
+    command=("clone", plugin_category),
+    info={
+        "header": "Clone the account of the mentioned or replied user",
+        "usage": "{tr}clone <username/userid/reply>",
+    },
+)
+async def clone_profile(event):
+    replied_user, error_i_a = await catub.get_user_from_event(event)
+    if replied_user is None:
+        await event.reply(error_i_a or "Failed to fetch user.")
+        return
 
-        try:
-            full = await client(GetFullUserRequest(target_entity.id))
-        except Exception as e:
-            await event.reply(f"Failed to get user info: {e}")
-            return
+    user_id = replied_user.id
+    profile_pic = await event.client.download_profile_photo(user_id, Config.TEMP_DIR)
 
-        user = getattr(full, 'user', None) or target_entity
+    # Prepare first and last names
+    first_name = html.escape(replied_user.first_name or "")
+    last_name = html.escape(replied_user.last_name or "")
+    if not last_name:
+        last_name = "⁪⁬⁮⁮⁮⁮ ‌‌‌‌"
 
-        # Clone first and last name
-        first_name = user.first_name or ""
-        last_name = user.last_name or ""
-        await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
+    # Get full user info for bio
+    full_user = (await event.client(GetFullUserRequest(user_id))).full_user
+    user_bio = getattr(full_user, "about", "")
 
-        # Clone username with random suffix if taken
-        base_username = getattr(user, "username", None)
-        if base_username:
-            tried_username = base_username
-            for _ in range(5):
-                try:
-                    await client(UpdateUsernameRequest(tried_username))
-                    break
-                except Exception:
-                    suffix = str(random.randint(10, 999))
-                    new_username = (base_username + suffix)[:32]
-                    tried_username = new_username
-            else:
-                await event.reply("Failed to set username; all attempts taken or username unavailable.")
-        else:
-            await event.reply("User has no username to clone.")
+    # Update profile
+    await event.client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
+    if user_bio:
+        await event.client(UpdateProfileRequest(about=user_bio))
 
-        # Clone bio/about safely
-        about = ""
-        if hasattr(full, "about") and full.about:
-            about = full.about
-        elif hasattr(full, "user") and getattr(full.user, "about", None):
-            about = full.user.about
+    # Update profile photo
+    if profile_pic:
+        pfile = await event.client.upload_file(profile_pic)
+        # Delete current photos
+        current_photos = await event.client.get_profile_photos("me")
+        if current_photos.total > 0:
+            await event.client(DeletePhotosRequest(current_photos))
+        await event.client(UploadProfilePhotoRequest(pfile))
 
-        if about:
-            await client(UpdateProfileRequest(about=about))
+    await edit_delete(event, f"✅ Successfully cloned [{first_name}](tg://user?id={user_id})")
+    
+    # Log if enabled
+    if BOTLOG:
+        await event.client.send_message(
+            BOTLOG_CHATID,
+            f"#CLONED\nSuccessfully cloned [{first_name}](tg://user?id={user_id})",
+        )
 
-        # Clone profile photo
-        try:
-            photos = await client.get_profile_photos(target_entity)
-            if photos.total > 0:
-                photo = photos[0]
-                bytes_io = io.BytesIO()
-                await client.download_media(photo, bytes_io)
-                bytes_io.seek(0)
-                # Delete existing photos
-                await client(DeletePhotosRequest(await client.get_profile_photos('me')))
-                # Upload cloned photo
-                await client(UploadProfilePhotoRequest(await client.upload_file(bytes_io)))
-        except Exception:
-            pass  # Ignore photo errors
+@catub.cat_cmd(
+    pattern=r"revert$",
+    command=("revert", plugin_category),
+    info={
+        "header": "Revert back to your original profile",
+        "note": "Requires DEFAULT_USER set in DB",
+        "usage": "{tr}revert",
+    },
+)
+async def revert_profile(event):
+    # Fetch saved default values
+    firstname = gvarstatus("FIRST_NAME") or ALIVE_NAME
+    lastname = gvarstatus("LAST_NAME") or ""
+    bio = gvarstatus("DEFAULT_BIO") or "This is my default bio."
 
-        await event.reply(f"✅ Cloned profile of [{user.first_name}](tg://user?id={user.id}) successfully.")
+    # Delete current profile photo
+    current_photos = await event.client.get_profile_photos("me", limit=1)
+    if current_photos.total > 0:
+        await event.client(DeletePhotosRequest(current_photos))
+
+    # Revert profile
+    await event.client(UpdateProfileRequest(first_name=firstname, last_name=lastname, about=bio))
+    await edit_delete(event, "✅ Successfully reverted to your original profile")
+
+    if BOTLOG:
+        await event.client.send_message(
+            BOTLOG_CHATID,
+            "#REVERT\nSuccessfully reverted profile back to original",
+    )
