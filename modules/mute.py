@@ -1,79 +1,56 @@
-from telethon import events, Button
-from telethon.tl.types import ChatBannedRights
-from telethon.errors import BadRequestError
-from main import client  # Make sure client is imported from your main.py
-from helpers.utils import get_user_from_event, _format
+from telethon import events, types
+from telethon.tl.functions.channels import GetParticipantRequest
+from telethon.tl.types import ChannelParticipantAdmin, ChannelParticipantCreator
 
-# Rights to mute normal users
-MUTE_RIGHTS = ChatBannedRights(
-    until_date=None,
-    send_messages=True
-)
+# Store muted users in memory (or you can persist in a file/db)
+MUTED_USERS = set()
 
-# -----------------------------
-# Smart mute command
-# -----------------------------
-@client.on(events.NewMessage(pattern=r"\.mute(?: |$)([\s\S]*)"))
-async def mute(event):
-    user, _ = await get_user_from_event(event)
-    if not user:
-        return await event.reply("No user found to mute.")
-    
-    # Get participant info
+async def get_participant(client, chat_id, user_id):
     try:
-        participant = await client.get_participants(event.chat_id, user_ids=[user.id])
-        is_admin = participant[0].admin_rights or participant[0].creator
-        is_owner = participant[0].creator
-    except Exception:
-        is_admin = False
-        is_owner = False
+        return await client(GetParticipantRequest(chat_id, user_id))
+    except:
+        return None
 
-    if is_owner:
-        await event.reply(f"Sometimes [{user.first_name}](tg://user?id={user.id}) should stay quiet.")
-    elif is_admin:
-        await event.reply(f"Have some rest [{user.first_name}](tg://user?id={user.id}) admin.")
+def is_admin_or_owner(participant):
+    if isinstance(participant.participant, ChannelParticipantAdmin):
+        return "admin"
+    elif isinstance(participant.participant, ChannelParticipantCreator):
+        return "owner"
+    return "member"
+
+@client.on(events.NewMessage(pattern=r'\.mute(?: |$)(.*)'))
+async def mute_handler(event):
+    chat = await event.get_chat()
+    if not getattr(chat, 'megagroup', False):
+        await event.reply("This command works only in groups.")
+        return
+
+    # Get target user
+    if event.is_reply:
+        target = await event.get_reply_message()
+        user = target.sender
     else:
-        # Normal user: restrict sending messages
+        args = event.pattern_match.group(1)
+        if not args:
+            await event.reply("Reply or mention a user to mute.")
+            return
+        user = await event.client.get_entity(args)
+
+    participant = await get_participant(event.client, event.chat_id, user.id)
+    role = is_admin_or_owner(participant) if participant else "member"
+
+    if role == "member":
+        MUTED_USERS.add(user.id)
+        await event.reply(f"Shhhh [{user.first_name}](tg://user?id={user.id}) stay quiet 😴")
+    elif role == "admin":
+        await event.reply(f"Have some rest, [{user.first_name}](tg://user?id={user.id}) 😎")
+    elif role == "owner":
+        await event.reply(f"Sometimes [{user.first_name}](tg://user?id={user.id}) should stay quiet 😉")
+
+@client.on(events.NewMessage)
+async def delete_muted_messages(event):
+    if event.chat_id and event.sender_id in MUTED_USERS:
         try:
-            await client(EditBannedRequest(event.chat_id, user.id, MUTE_RIGHTS))
-            await event.reply(f"Shhhh [{user.first_name}](tg://user?id={user.id}), stay muted for some time!")
-        except BadRequestError:
-            await event.reply("I don't have permission to mute this user.")
-
-# -----------------------------
-# Unmute command
-# -----------------------------
-@client.on(events.NewMessage(pattern=r"\.unmute(?: |$)([\s\S]*)"))
-async def unmute(event):
-    user, _ = await get_user_from_event(event)
-    if not user:
-        return await event.reply("No user found to unmute.")
-
-    try:
-        from telethon.tl.functions.channels import EditBannedRequest
-        from telethon.tl.types import ChatBannedRights
-
-        UNMUTE_RIGHTS = ChatBannedRights(
-            until_date=None,
-            send_messages=None
-        )
-        await client(EditBannedRequest(event.chat_id, user.id, UNMUTE_RIGHTS))
-        await event.reply(f"Unmuted [{user.first_name}](tg://user?id={user.id}) successfully.")
-    except Exception:
-        await event.reply("Failed to unmute this user.")
-
-# -----------------------------
-# Muteall command
-# -----------------------------
-@client.on(events.NewMessage(pattern=r"\.muteall"))
-async def muteall(event):
-    try:
-        participants = await client.get_participants(event.chat_id)
-        muted_count = 0
-        for user in participants:
-            if not user.admin_rights and not user.creator:
-                await client(EditBannedRequest(event.chat_id, user.id, MUTE_RIGHTS))
-                muted_count += 1
-        await event.reply(f"Muted {muted_count} users (admins and owner untouched).")
-    except Exception as e:
-        await event.reply(f"Error while muting everyone: {e}")
+            await event.delete()
+        except:
+            pass
