@@ -18,26 +18,23 @@ def register(client):
     @client.on(events.NewMessage(pattern=r'\.gcinfo'))
     async def gcinfo_handler(event):
         chat = await event.get_chat()
+        chat_id = chat.id
+        active_today = daily_messages.get(chat_id, 0)
 
         if not isinstance(chat, (Channel, Chat)):
             await event.reply("This command only works in groups.")
             return
 
         chat_title = chat.title
-        chat_id = chat.id
-        active_today = daily_messages.get(chat_id, 0)
-
         total_members = 0
         owner_mention = "Unavailable"
         admins = []
-        member_names = []
 
         try:
             if isinstance(chat, Channel):  # Supergroup / channel
                 full = await client(GetFullChannelRequest(chat.id))
                 total_members = full.full_chat.participants_count
 
-                # Get admins
                 participants = await client(GetParticipantsRequest(
                     channel=chat,
                     filter=ChannelParticipantsAdmins(),
@@ -49,15 +46,12 @@ def register(client):
                 for p in participants.users:
                     entity = await client.get_entity(p.id)
                     mention = f"[{get_display_name(entity)}](tg://user?id={entity.id})"
+
+                    # Check creator
                     if getattr(p, 'creator', False):
                         owner_mention = mention
                     else:
                         admins.append(mention)
-
-                # Fetch first 20 members as example
-                all_members = await client.get_participants(chat, limit=20)
-                for m in all_members:
-                    member_names.append(f"{get_display_name(m)}")
 
             else:  # Basic group
                 full = await client(GetFullChatRequest(chat.id))
@@ -66,17 +60,15 @@ def register(client):
                 for u in full.users:
                     entity = await client.get_entity(u.id)
                     mention = f"[{get_display_name(entity)}](tg://user?id={entity.id})"
+
                     if getattr(u, 'creator', False) or getattr(u.admin_rights, 'is_creator', False):
                         owner_mention = mention
                     elif getattr(u, 'admin_rights', None):
                         admins.append(mention)
-                    member_names.append(get_display_name(entity))
 
         except Exception as e:
             await event.reply(f"Failed to fetch group info: {e}")
             return
-
-        members_text = "\n".join(member_names[:20])  # show first 20 members
 
         msg = (
             f"**Group Info:**\n"
@@ -85,8 +77,7 @@ def register(client):
             f"Total Members: {total_members}\n"
             f"Active Messages Today: {active_today}\n"
             f"Owner: {owner_mention}\n"
-            f"Admins ({len(admins)}):\n" + ("\n".join(admins) if admins else "None") + "\n\n"
-            f"Some Members:\n{members_text}"
+            f"Admins ({len(admins)}):\n" + ("\n".join(admins) if admins else "None")
         )
 
         await event.reply(msg)
