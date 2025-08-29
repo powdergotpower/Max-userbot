@@ -7,19 +7,21 @@ from telethon.tl.functions.users import GetFullUserRequest
 
 def register(client):
 
-    @client.on(events.NewMessage(pattern=r'\.clone(?:\s+(.+))?'))
+    @client.on(events.NewMessage(pattern=r'^\.clone(?:\s+(.+))?$', outgoing=True))
     async def clone_profile(event):
         arg = event.pattern_match.group(1)
-
-        # Determine target
+        
         if arg:
             target = arg.strip()
         elif event.is_reply:
             reply_msg = await event.get_reply_message()
-            target = reply_msg.sender_id
+            target = reply_msg.sender_id if reply_msg else None
+            if not target:
+                await event.reply("Cannot get the user from reply.")
+                return
         else:
-            # PM or no argument
-            target = event.sender_id  # clone self if in PM
+            await event.reply("Usage:\n.clone @username\nor reply to a user's message with .clone")
+            return
 
         try:
             target_entity = await client.get_entity(target)
@@ -33,16 +35,15 @@ def register(client):
             await event.reply(f"Failed to get user info: {e}")
             return
 
-        # user object
         user = getattr(full, 'user', None) or target_entity
 
-        # Change first and last name
+        # Clone first and last name
         first_name = user.first_name or ""
         last_name = user.last_name or ""
         await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
 
-        # Clone username with random suffix attempts
-        base_username = getattr(user, 'username', None)
+        # Clone username with random suffix if taken
+        base_username = getattr(user, "username", None)
         if base_username:
             tried_username = base_username
             for _ in range(5):
@@ -53,21 +54,34 @@ def register(client):
                     suffix = str(random.randint(10, 999))
                     new_username = (base_username + suffix)[:32]
                     tried_username = new_username
+            else:
+                await event.reply("Failed to set username; all attempts taken or username unavailable.")
+        else:
+            await event.reply("User has no username to clone.")
 
-        # Clone bio/about
-        about = getattr(full, 'about', "") or ""
-        await client(UpdateProfileRequest(about=about))
+        # Clone bio/about safely
+        about = ""
+        if hasattr(full, "about") and full.about:
+            about = full.about
+        elif hasattr(full, "user") and getattr(full.user, "about", None):
+            about = full.user.about
+
+        if about:
+            await client(UpdateProfileRequest(about=about))
 
         # Clone profile photo
-        photos = await client.get_profile_photos(target_entity)
-        if photos.total > 0:
-            photo = photos[0]
-            bytes_io = io.BytesIO()
-            await client.download_media(photo, bytes_io)
-            bytes_io.seek(0)
-            # Delete current photos
-            await client(DeletePhotosRequest(await client.get_profile_photos('me')))
-            # Upload new profile photo
-            await client(UploadProfilePhotoRequest(await client.upload_file(bytes_io)))
+        try:
+            photos = await client.get_profile_photos(target_entity)
+            if photos.total > 0:
+                photo = photos[0]
+                bytes_io = io.BytesIO()
+                await client.download_media(photo, bytes_io)
+                bytes_io.seek(0)
+                # Delete existing photos
+                await client(DeletePhotosRequest(await client.get_profile_photos('me')))
+                # Upload cloned photo
+                await client(UploadProfilePhotoRequest(await client.upload_file(bytes_io)))
+        except Exception:
+            pass  # Ignore photo errors
 
         await event.reply(f"✅ Cloned profile of [{user.first_name}](tg://user?id={user.id}) successfully.")
