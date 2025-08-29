@@ -21,10 +21,14 @@ ALLOWED_USERS = [8032922682, 5628638472, 7521335983]
 # -----------------------------
 # Global filter to block others
 # -----------------------------
-@client.on(events.NewMessage(incoming=True))
 async def global_filter(event):
     if event.sender_id not in ALLOWED_USERS:
-        return  # Ignore all messages from non-whitelisted users
+        # Prevent any other handlers from receiving this event
+        event._handled = True
+        return
+
+# Add the filter BEFORE loading modules
+client.add_event_handler(global_filter, events.NewMessage(incoming=True))
 
 # -----------------------------
 # Dynamic plugin loader
