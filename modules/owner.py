@@ -1,19 +1,20 @@
 from telethon import events
 from telethon.tl.functions.channels import GetFullChannelRequest, GetParticipantsRequest
 from telethon.tl.functions.messages import GetFullChatRequest
-from telethon.tl.types import Channel, Chat, ChannelParticipantsAdmins
+from telethon.tl.types import Channel, Chat, ChannelParticipantsAdmins, User
 from telethon.utils import get_display_name
 
 daily_messages = {}
 
 def register(client):
 
-    # Daily message counter
+    # Track daily message count
     @client.on(events.NewMessage)
     async def daily_counter(event):
         chat_id = event.chat_id
         daily_messages[chat_id] = daily_messages.get(chat_id, 0) + 1
 
+    # .gcinfo command
     @client.on(events.NewMessage(pattern=r'\.gcinfo'))
     async def gcinfo_handler(event):
         chat = await event.get_chat()
@@ -42,22 +43,20 @@ def register(client):
                     hash=0
                 ))
 
-                # Find owner by checking for 'creator' flag or highest permissions
                 owner_entity = None
                 potential_admins = []
 
                 for p in participants.users:
                     entity = await client.get_entity(p.id)
+                    # Exclude bots
+                    if isinstance(entity, User) and entity.bot:
+                        continue
                     mention = f"[{get_display_name(entity)}](tg://user?id={entity.id})"
-                    
-                    # Telegram does not always set creator flag; check permission level
-                    is_creator = getattr(p, 'creator', False)
-                    if is_creator:
+                    if getattr(p, 'creator', False):
                         owner_entity = entity
                     else:
                         potential_admins.append((entity, mention))
 
-                # Fallback if no creator found: choose admin with full permissions or first admin
                 if owner_entity is None and potential_admins:
                     owner_entity = potential_admins[0][0]
                     owner_mention = potential_admins[0][1]
@@ -78,6 +77,9 @@ def register(client):
 
                 for u in full.users:
                     entity = await client.get_entity(u.id)
+                    # Exclude bots
+                    if isinstance(entity, User) and entity.bot:
+                        continue
                     mention = f"[{get_display_name(entity)}](tg://user?id={entity.id})"
                     if getattr(u, "creator", False) or getattr(u.admin_rights, "is_creator", False):
                         owner_entity = entity
