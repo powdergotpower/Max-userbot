@@ -1,11 +1,20 @@
 from telethon import events
-from telethon.tl.functions.channels import EditBannedRequest, EditAdminRequest, EditPhotoRequest
-from telethon.tl.types import ChatBannedRights, ChatAdminRights, InputChatPhotoEmpty
-from telethon.errors import BadRequestError, UserAdminInvalidError
+from telethon.tl.functions.channels import (
+    EditAdminRequest,
+    EditBannedRequest,
+    EditPhotoRequest,
+)
+from telethon.tl.types import ChatAdminRights, ChatBannedRights, InputChatPhotoEmpty
+from telethon.errors import BadRequestError, UserAdminInvalidError, UserIdInvalidError
 
-# ---------------------
-# Permission Rights
-# ---------------------
+from ..core.managers import edit_or_reply, edit_delete
+from ..helpers.utils import get_user_from_event, _format
+from ..core.data import _sudousers_list
+from ..core.logger import logging
+from . import BOTLOG, BOTLOG_CHATID
+
+LOGS = logging.getLogger(__name__)
+
 BANNED_RIGHTS = ChatBannedRights(
     until_date=None,
     view_messages=True,
@@ -29,138 +38,148 @@ UNBAN_RIGHTS = ChatBannedRights(
     embed_links=None,
 )
 
-MUTE_RIGHTS = ChatBannedRights(until_date=None, send_messages=True)
-UNMUTE_RIGHTS = ChatBannedRights(until_date=None, send_messages=False)
+# ------------------- ADMIN COMMANDS -------------------
 
-# ---------------------
-# Register plugin
-# ---------------------
-def register(client):
+@catub.cat_cmd(pattern=r"promote(?:\s|$)([\s\S]*)", groups_only=True, require_admin=True)
+async def promote(event):
+    user, rank = await get_user_from_event(event)
+    if not user:
+        return await edit_or_reply(event, "`User not found.`")
+    if not rank:
+        rank = "Admin"
+    new_rights = ChatAdminRights(
+        add_admins=False,
+        invite_users=True,
+        change_info=False,
+        ban_users=True,
+        delete_messages=True,
+        pin_messages=True,
+    )
+    catevent = await edit_or_reply(event, "`Promoting...`")
+    try:
+        await event.client(EditAdminRequest(event.chat_id, user.id, new_rights, rank))
+    except BadRequestError:
+        return await catevent.edit("`I don't have permission to promote!`")
+    await catevent.edit(f"`{user.first_name} promoted successfully!`")
+    if BOTLOG:
+        await event.client.send_message(
+            BOTLOG_CHATID,
+            f"#PROMOTE\nUSER: [{user.first_name}](tg://user?id={user.id})\nCHAT: {event.chat_id}",
+        )
 
-    # Ban user
-    @client.on(events.NewMessage(pattern=r"\.ban(?: |$)(.*)"))
-    async def ban_user(event):
-        if not event.is_group:
-            return
-        try:
-            reply = await event.get_reply_message()
-            user = reply.sender if reply else None
-            if not user:
-                await event.respond("Reply to a user to ban them.")
-                return
-            await client(EditBannedRequest(event.chat_id, user.id, BANNED_RIGHTS))
-            await event.respond(f"🚫 Banned {user.first_name}")
-        except UserAdminInvalidError:
-            await event.respond("I need admin rights to ban users.")
 
-    # Unban user
-    @client.on(events.NewMessage(pattern=r"\.unban(?: |$)(.*)"))
-    async def unban_user(event):
-        if not event.is_group:
-            return
-        try:
-            reply = await event.get_reply_message()
-            user = reply.sender if reply else None
-            if not user:
-                await event.respond("Reply to a user to unban them.")
-                return
-            await client(EditBannedRequest(event.chat_id, user.id, UNBAN_RIGHTS))
-            await event.respond(f"✅ Unbanned {user.first_name}")
-        except UserAdminInvalidError:
-            await event.respond("I need admin rights to unban users.")
+@catub.cat_cmd(pattern=r"demote(?:\s|$)([\s\S]*)", groups_only=True, require_admin=True)
+async def demote(event):
+    user, _ = await get_user_from_event(event)
+    if not user:
+        return await edit_or_reply(event, "`User not found.`")
+    new_rights = ChatAdminRights(
+        add_admins=None,
+        invite_users=None,
+        change_info=None,
+        ban_users=None,
+        delete_messages=None,
+        pin_messages=None,
+    )
+    catevent = await edit_or_reply(event, "`Demoting...`")
+    try:
+        await event.client(EditAdminRequest(event.chat_id, user.id, new_rights, "admin"))
+    except BadRequestError:
+        return await catevent.edit("`I don't have permission to demote!`")
+    await catevent.edit(f"`{user.first_name} demoted successfully!`")
+    if BOTLOG:
+        await event.client.send_message(
+            BOTLOG_CHATID,
+            f"#DEMOTE\nUSER: [{user.first_name}](tg://user?id={user.id})\nCHAT: {event.chat_id}",
+        )
 
-    # Kick user
-    @client.on(events.NewMessage(pattern=r"\.kick(?: |$)(.*)"))
-    async def kick_user(event):
-        if not event.is_group:
-            return
-        try:
-            reply = await event.get_reply_message()
-            user = reply.sender if reply else None
-            if not user:
-                await event.respond("Reply to a user to kick them.")
-                return
-            await client.kick_participant(event.chat_id, user.id)
-            await event.respond(f"👢 Kicked {user.first_name}")
-        except UserAdminInvalidError:
-            await event.respond("I need admin rights to kick users.")
 
-    # Mute user
-    @client.on(events.NewMessage(pattern=r"\.mute(?: |$)(.*)"))
-    async def mute_user(event):
-        if not event.is_group:
-            return
-        try:
-            reply = await event.get_reply_message()
-            user = reply.sender if reply else None
-            if not user:
-                await event.respond("Reply to a user to mute them.")
-                return
-            await client(EditBannedRequest(event.chat_id, user.id, MUTE_RIGHTS))
-            await event.respond(f"🔇 Muted {user.first_name}")
-        except UserAdminInvalidError:
-            await event.respond("I need admin rights to mute users.")
+@catub.cat_cmd(pattern=r"ban(?:\s|$)([\s\S]*)", groups_only=True, require_admin=True)
+async def ban(event):
+    user, reason = await get_user_from_event(event)
+    if not user:
+        return await edit_or_reply(event, "`User not found.`")
+    
+    # Prevent banning admins/owner
+    participant = await event.client.get_permissions(event.chat_id, user.id)
+    if participant.admin_rights or participant.creator:
+        return await edit_or_reply(event, "`Cannot ban an admin or owner!`")
+    
+    catevent = await edit_or_reply(event, "`Banning...`")
+    try:
+        await event.client(EditBannedRequest(event.chat_id, user.id, BANNED_RIGHTS))
+    except BadRequestError:
+        return await catevent.edit("`I don't have permission to ban!`")
+    
+    await catevent.edit(f"`{user.first_name} is banned! Reason: {reason or 'No reason'}`")
+    if BOTLOG:
+        await event.client.send_message(
+            BOTLOG_CHATID,
+            f"#BAN\nUSER: [{user.first_name}](tg://user?id={user.id})\nCHAT: {event.chat_id}\nREASON: {reason or 'No reason'}",
+        )
 
-    # Unmute user
-    @client.on(events.NewMessage(pattern=r"\.unmute(?: |$)(.*)"))
-    async def unmute_user(event):
-        if not event.is_group:
-            return
-        try:
-            reply = await event.get_reply_message()
-            user = reply.sender if reply else None
-            if not user:
-                await event.respond("Reply to a user to unmute them.")
-                return
-            await client(EditBannedRequest(event.chat_id, user.id, UNMUTE_RIGHTS))
-            await event.respond(f"🔊 Unmuted {user.first_name}")
-        except UserAdminInvalidError:
-            await event.respond("I need admin rights to unmute users.")
 
-    # Pin message
-    @client.on(events.NewMessage(pattern=r"\.pin(?: |$)(loud)?"))
-    async def pin_message(event):
-        if not event.is_group:
-            return
-        reply = await event.get_reply_message()
-        if not reply:
-            await event.respond("Reply to a message to pin.")
-            return
-        is_loud = bool(event.pattern_match.group(1))
-        try:
-            await client.pin_message(event.chat_id, reply.id, notify=is_loud)
-            await event.respond(f"📌 Pinned message{' loudly' if is_loud else ''}.")
-        except BadRequestError:
-            await event.respond("I need admin rights to pin messages.")
+@catub.cat_cmd(pattern=r"unban(?:\s|$)([\s\S]*)", groups_only=True, require_admin=True)
+async def unban(event):
+    user, _ = await get_user_from_event(event)
+    if not user:
+        return await edit_or_reply(event, "`User not found.`")
+    
+    catevent = await edit_or_reply(event, "`Unbanning...`")
+    try:
+        await event.client(EditBannedRequest(event.chat_id, user.id, UNBAN_RIGHTS))
+    except UserIdInvalidError:
+        return await catevent.edit("`Cannot unban this user.`")
+    except Exception as e:
+        return await catevent.edit(f"**Error:** {e}")
+    
+    await catevent.edit(f"`{user.first_name} is unbanned successfully.`")
 
-    # Unpin message
-    @client.on(events.NewMessage(pattern=r"\.unpin(?: |$)(all)?"))
-    async def unpin_message(event):
-        if not event.is_group:
-            return
-        reply = await event.get_reply_message()
-        all_msgs = bool(event.pattern_match.group(1))
-        try:
-            if all_msgs:
-                await client.unpin_message(event.chat_id)
-                await event.respond("📌 Unpinned all messages.")
-            elif reply:
-                await client.unpin_message(event.chat_id, reply.id)
-                await event.respond("📌 Message unpinned.")
-            else:
-                await event.respond("Reply to a message or use `.unpin all`.")
-        except BadRequestError:
-            await event.respond("I need admin rights to unpin messages.")
 
-    # Purge messages
-    @client.on(events.NewMessage(pattern=r"\.purge(?: |$)(\d+)?"))
-    async def purge_messages(event):
-        if not event.is_group:
-            return
-        try:
-            limit = int(event.pattern_match.group(1)) if event.pattern_match.group(1) else 10
-            msgs = await client.get_messages(event.chat_id, limit=limit)
-            await client.delete_messages(event.chat_id, [m.id for m in msgs])
-            await event.respond(f"🧹 Purged {len(msgs)} messages.")
-        except Exception as e:
-            await event.respond(f"Error: {e}")
+@catub.cat_cmd(pattern=r"kick(?:\s|$)([\s\S]*)", groups_only=True, require_admin=True)
+async def kick(event):
+    user, reason = await get_user_from_event(event)
+    if not user:
+        return await edit_or_reply(event, "`User not found.`")
+    
+    # Prevent kicking admins/owner
+    participant = await event.client.get_permissions(event.chat_id, user.id)
+    if participant.admin_rights or participant.creator:
+        return await edit_or_reply(event, "`Cannot kick an admin or owner!`")
+    
+    catevent = await edit_or_reply(event, "`Kicking...`")
+    try:
+        await event.client.kick_participant(event.chat_id, user.id)
+    except BadRequestError:
+        return await catevent.edit("`I don't have permission to kick!`")
+    
+    await catevent.edit(f"`{user.first_name} has been kicked! Reason: {reason or 'No reason'}`")
+
+
+@catub.cat_cmd(pattern=r"pin( loud|$)", groups_only=True, require_admin=True)
+async def pin(event):
+    to_pin = event.reply_to_msg_id
+    if not to_pin:
+        return await edit_delete(event, "`Reply to a message to pin.`")
+    is_silent = bool(event.pattern_match.group(1))
+    try:
+        await event.client.pin_message(event.chat_id, to_pin, notify=is_silent)
+    except BadRequestError:
+        return await edit_delete(event, "`I don't have permission to pin.`")
+    await edit_delete(event, "`Message pinned successfully!`", 3)
+
+
+@catub.cat_cmd(pattern=r"unpin( all|$)", groups_only=True, require_admin=True)
+async def unpin(event):
+    to_unpin = event.reply_to_msg_id
+    options = (event.pattern_match.group(1) or "").strip()
+    try:
+        if options == "all":
+            await event.client.unpin_message(event.chat_id)
+        elif to_unpin:
+            await event.client.unpin_message(event.chat_id, to_unpin)
+        else:
+            return await edit_delete(event, "`Reply to a message to unpin or use .unpin all.`")
+    except BadRequestError:
+        return await edit_delete(event, "`I don't have permission to unpin.`")
+    await edit_delete(event, "`Message unpinned successfully!`", 3)
