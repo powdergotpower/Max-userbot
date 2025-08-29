@@ -1,6 +1,5 @@
 # clone.py
 import os
-import random
 import html
 from telethon import events, functions
 from telethon.tl.functions.users import GetFullUserRequest
@@ -10,6 +9,7 @@ def register(client):
 
     @client.on(events.NewMessage(pattern=r'^\.clone(?:\s+(.+))?$', outgoing=True))
     async def clone_profile(event):
+        # Determine target
         arg = event.pattern_match.group(1)
         if arg:
             target = arg.strip()
@@ -33,7 +33,7 @@ def register(client):
         # Fetch full user info
         try:
             full = await client(GetFullUserRequest(target_entity.id))
-            user = getattr(full, "user", target_entity)
+            user = getattr(full, 'user', target_entity)
         except Exception as e:
             await event.reply(f"Failed to get user info: {e}")
             return
@@ -42,20 +42,6 @@ def register(client):
         first_name = html.escape(user.first_name or "")
         last_name = html.escape(user.last_name or "")
         await client(functions.account.UpdateProfileRequest(first_name=first_name, last_name=last_name))
-
-        # Clone username
-        base_username = getattr(user, "username", None)
-        if base_username:
-            tried_username = base_username
-            for _ in range(5):
-                try:
-                    await client(functions.account.UpdateUsernameRequest(tried_username))
-                    break
-                except Exception:
-                    suffix = str(random.randint(10, 999))
-                    tried_username = (base_username + suffix)[:32]
-            else:
-                await event.reply("Failed to set username; all attempts taken or username unavailable.")
 
         # Clone bio/about safely
         about = getattr(getattr(full, "full_user", None), "about", "")
