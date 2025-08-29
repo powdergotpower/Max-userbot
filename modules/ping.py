@@ -3,8 +3,8 @@ import time
 
 def register(client):
 
-    @client.on(events.NewMessage(pattern=r'^\.ping$'))
-    async def ping_handler(event):
+    @client.on(events.NewMessage(pattern=r'^\.p$'))
+    async def p_handler(event):
         start = time.time()
         msg = await event.reply("Pong! 🏓")
         end = time.time()
