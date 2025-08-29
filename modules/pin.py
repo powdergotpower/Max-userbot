@@ -1,6 +1,6 @@
 # modules/pin.py
 from telethon import events
-from telethon.tl.functions.messages import PinMessageRequest, UnpinAllMessagesRequest
+from telethon.tl.functions.messages import UpdatePinnedMessageRequest, UnpinAllMessagesRequest
 
 def register(client):
 
@@ -17,7 +17,7 @@ def register(client):
 
         try:
             msg = await event.get_reply_message()
-            await client(PinMessageRequest(event.chat_id, msg.id, silent=True))
+            await client(UpdatePinnedMessageRequest(event.chat_id, id=msg.id, silent=True))
             await event.reply("✅ Message pinned successfully!")
         except Exception as e:
             await event.reply(f"Failed to pin message: {e}")
