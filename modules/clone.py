@@ -1,56 +1,75 @@
+import random
 from telethon import events
-from telethon.tl.functions.account import UpdateProfileRequest
-from telethon.tl.functions.photos import UploadProfilePhotoRequest
+from telethon.tl.functions.account import UpdateUsernameRequest, UpdateProfileRequest, UpdateProfileRequest
+from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
+from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.types import InputPhoto
 import io
 
 def register(client):
 
     @client.on(events.NewMessage(pattern=r'\.clone(?: |$)(.*)'))
-    async def clone_handler(event):
-        arg = event.pattern_match.group(1).strip()
-
-        # Determine target user
-        if event.is_private and not arg and not event.is_reply:
-            await event.reply("Please reply to a user or provide a username/user_id to clone.")
-            return
-        try:
-            if event.is_reply and not arg:
-                user = await (await event.get_reply_message()).sender
-            elif arg:
-                if arg.isdigit():
-                    user = await client.get_entity(int(arg))
-                elif arg.startswith("@"):
-                    user = await client.get_entity(arg)
-                else:
-                    await event.reply("Invalid input. Use .clone @username or reply to a user.")
-                    return
-            else:
-                user = await client.get_me()
-        except Exception:
-            await event.reply("Cannot find the user.")
+    async def clone_profile(event):
+        if event.pattern_match.group(1):
+            target = event.pattern_match.group(1).strip()
+        elif event.is_reply:
+            target = (await event.get_reply_message()).sender_id
+        else:
+            await event.reply("Usage: .clone @username or reply to a user's message")
             return
 
-        msg = ""
-
-        # Clone name
         try:
-            first_name = user.first_name or ""
-            last_name = user.last_name or ""
-            await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
-            msg += f"✅ Name cloned: {first_name} {last_name}\n"
+            target_entity = await client.get_entity(target)
         except Exception as e:
-            msg += f"❌ Failed to clone name: {e}\n"
+            await event.reply(f"Failed to find user: {e}")
+            return
 
-        # Clone profile photo
         try:
-            photos = await client.get_profile_photos(user.id, limit=1)
-            if photos.total > 0:
-                photo_bytes = await client.download_media(photos[0], file=bytes)
-                await client(UploadProfilePhotoRequest(file=photo_bytes))
-                msg += "✅ Profile photo cloned."
-            else:
-                msg += "⚠️ User has no profile photo."
+            full = await client(GetFullUserRequest(target_entity.id))
         except Exception as e:
-            msg += f"❌ Failed to clone profile photo: {e}"
+            await event.reply(f"Failed to get user info: {e}")
+            return
 
-        await event.reply(msg)
+        # Change first and last name
+        first_name = full.user.first_name or ""
+        last_name = full.user.last_name or ""
+        await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
+
+        # Attempt to clone username with fallback random suffix if taken
+        base_username = full.user.username
+        if base_username:
+            tried_username = base_username
+            success = False
+            for _ in range(5):  # try up to 5 times with random suffix
+                try:
+                    await client(UpdateUsernameRequest(tried_username))
+                    success = True
+                    break
+                except Exception:
+                    # Append a random 2 or 3 digit number to username
+                    suffix = str(random.randint(10, 999))
+                    # Usernames must be 5 to 32 chars
+                    new_username = (base_username + suffix)[:32]
+                    tried_username = new_username
+            if not success:
+                await event.reply("Failed to clone username, all attempts taken.")
+        else:
+            await event.reply("Target user has no username to clone.")
+
+        # Change bio/about
+        about = full.full_user.about or ""
+        await client(UpdateProfileRequest(about=about))
+
+        # Clone profile photo - first photo only
+        photos = await client.get_profile_photos(target_entity)
+        if photos.total > 0:
+            photo = photos[0]
+            bytes_io = io.BytesIO()
+            await client.download_media(photo, bytes_io)
+            bytes_io.seek(0)
+            # Delete all current profile photos
+            await client(DeletePhotosRequest(await client.get_profile_photos('me')))
+            # Upload new profile photo
+            await client(UploadProfilePhotoRequest(await client.upload_file(bytes_io)))
+
+        await event.reply(f"📝 Cloned profile of [{target_entity.first_name}](tg://user?id={target_entity.id}) successfully.")
