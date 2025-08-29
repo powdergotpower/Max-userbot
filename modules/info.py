@@ -14,7 +14,8 @@ def register(client):
             user = await event.get_chat()
         # 2️⃣ Reply in group → get sender
         elif event.is_reply and not arg:
-            user = await event.get_reply_message().get_sender()
+            reply_msg = await event.get_reply_message()  # ✅ await coroutine first
+            user = await reply_msg.get_sender()
         # 3️⃣ Username or ID provided
         elif arg:
             try:
