@@ -1,8 +1,9 @@
 from telethon import events
+from telethon.tl.functions.messages import GetFullChat
 from telethon.tl.functions.channels import GetFullChannel
 from telethon.tl.functions.users import GetFullUser
 from telethon.tl.types import ChannelParticipantsAdmins, UserStatusOffline, UserStatusOnline
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Track daily messages (simple in-memory counter)
 DAILY_MSGS = {}
@@ -13,14 +14,16 @@ def get_daily_msgs(chat_id, user_id):
 @client.on(events.NewMessage(pattern=r'\.gcinfo'))
 async def gcinfo(event):
     chat = await event.get_chat()
-    if not getattr(chat, 'megagroup', False):
-        await event.reply("This command works only in groups.")
-        return
+    if getattr(chat, 'megagroup', False) or getattr(chat, 'broadcast', False):
+        # For supergroups and channels
+        full = await client(GetFullChannel(channel=chat.id))
+    else:
+        # For normal groups
+        full = await client(GetFullChat(chat_id=event.chat_id))
 
-    full = await client(GetFullChannel(event.chat_id))
     participants = await client.get_participants(event.chat_id)
-    admins = [p for p in participants if p.participant.admin_rights or p.participant.creator]
-    total_users = full.full_chat.participants_count
+    admins = [p for p in participants if getattr(p.participant, 'admin_rights', None) or getattr(p.participant, 'creator', False)]
+    total_users = len(participants)
 
     # Active members today
     active_users = len([uid for uid, msgs in DAILY_MSGS.get(event.chat_id, {}).items() if msgs > 0])
@@ -34,9 +37,22 @@ async def gcinfo(event):
     # Total daily messages in this group
     group_daily_msgs = sum(DAILY_MSGS.get(event.chat_id, {}).values())
 
+    # Description
+    description = getattr(full.full_chat, 'about', None) or getattr(full.full_chat, 'description', 'No description')
+
+    # Invite link
+    invite_link = getattr(full.full_chat, 'exported_invite', None) or 'No invite link'
+
+    # Group creation date (if available)
+    created = getattr(full.full_chat, 'date', None)
+    created_str = created.strftime("%Y-%m-%d %H:%M") if created else "Unknown"
+
     msg = f"**Group Info:**\n"
     msg += f"Title: {chat.title}\n"
     msg += f"ID: {chat.id}\n"
+    msg += f"Description: {description}\n"
+    msg += f"Invite link: {invite_link}\n"
+    msg += f"Created: {created_str}\n"
     msg += f"Total members: {total_users}\n"
     msg += f"Admins count: {len(admins)}\n"
     msg += f"Active members today: {active_users}\n"
@@ -45,6 +61,7 @@ async def gcinfo(event):
         msg += f"Owner: [{owner.first_name}](tg://user?id={owner.id})\n"
 
     await event.reply(msg)
+
 
 @client.on(events.NewMessage(pattern=r'\.info(?: |$)(.*)'))
 async def user_info(event):
@@ -83,7 +100,7 @@ async def user_info(event):
     msg += f"Daily messages today: {daily_msgs}\n"
     msg += f"Status: {status}\n"
 
-    # Optional: roles in common groups
+    # Roles in common groups
     roles = []
     for chat in common_chats:
         participants = await client.get_participants(chat.id, filter=ChannelParticipantsAdmins)
