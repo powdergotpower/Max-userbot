@@ -4,7 +4,7 @@ from telethon.tl.functions.messages import GetFullChatRequest
 from telethon.tl.types import Channel, Chat, ChannelParticipantsAdmins
 from telethon.utils import get_display_name
 
-daily_messages = {}  # keeps track of messages per chat_id
+daily_messages = {}
 
 def register(client):
 
@@ -19,7 +19,6 @@ def register(client):
     async def gcinfo_handler(event):
         chat = await event.get_chat()
 
-        # Only work in groups
         if not isinstance(chat, (Channel, Chat)):
             await event.reply("This command only works in groups.")
             return
@@ -37,7 +36,6 @@ def register(client):
                 full = await client(GetFullChannelRequest(chat.id))
                 total_members = full.full_chat.participants_count
 
-                # Get admins (including owner)
                 participants = await client(GetParticipantsRequest(
                     channel=chat,
                     filter=ChannelParticipantsAdmins(),
@@ -47,22 +45,24 @@ def register(client):
                 ))
 
                 for p in participants.users:
-                    name = f"@{p.username}" if getattr(p, 'username', None) else get_display_name(p)
+                    entity = await client.get_entity(p.id)
+                    mention = f"[{get_display_name(entity)}](tg://user?id={entity.id})"
                     if getattr(p, 'creator', False):
-                        owner_mention = name
+                        owner_mention = mention
                     else:
-                        admins.append(name)
+                        admins.append(mention)
 
             else:  # Basic group
                 full = await client(GetFullChatRequest(chat.id))
                 total_members = len(full.users)
 
                 for u in full.users:
-                    name = f"@{u.username}" if getattr(u, 'username', None) else get_display_name(u)
+                    entity = await client.get_entity(u.id)
+                    mention = f"[{get_display_name(entity)}](tg://user?id={entity.id})"
                     if getattr(u, 'creator', False) or getattr(u.admin_rights, 'is_creator', False):
-                        owner_mention = name
+                        owner_mention = mention
                     elif getattr(u, 'admin_rights', None):
-                        admins.append(name)
+                        admins.append(mention)
 
         except Exception as e:
             await event.reply(f"Failed to fetch group info: {e}")
