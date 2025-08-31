@@ -1,7 +1,8 @@
-# --- DM Approval System (Telethon Userbot) ---
-import json
+# modules/approve.py
 import os
+import json
 from telethon import events
+from main import client   # ✅ import the client from main.py
 
 APPROVED_PATH = "approved.json"
 PM_GUARD_TEXT = (
@@ -26,7 +27,7 @@ def save_approved(data: set):
         json.dump(list(data), f)
 
 APPROVED = load_approved()
-WARNED_ONCE = set()  # users warned this session
+WARNED_ONCE = set()
 
 # ---- Auto-guard: reply to unknown PMs ----
 @client.on(events.NewMessage(incoming=True))
@@ -45,7 +46,7 @@ async def pm_guard(event):
         except:
             pass
 
-# ---- .apr command (approve) ----
+# ---- .apr command ----
 @client.on(events.NewMessage(outgoing=True, pattern=r"^\.apr(?:\s+(.*))?$"))
 async def approve_cmd(event):
     if not event.is_private:
@@ -63,7 +64,7 @@ async def approve_cmd(event):
         msg += f"\n📝 Reason: {reason}"
     await event.edit(msg)
 
-# ---- .dis command (disapprove) ----
+# ---- .dis command ----
 @client.on(events.NewMessage(outgoing=True, pattern=r"^\.dis$"))
 async def disapprove_cmd(event):
     if not event.is_private:
